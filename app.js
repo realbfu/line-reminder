@@ -186,10 +186,16 @@ function listen() {
   };
 
   recog.onerror = (e) => {
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-      stopConversation();
-      toast('沒有麥克風權限，請在瀏覽器設定允許使用麥克風，或改用打字');
-    }
+    // 沒聽到聲音或被我們自己中止屬正常狀況，onend 會重新開始收音
+    if (e.error === 'no-speech' || e.error === 'aborted') return;
+    const messages = {
+      'not-allowed': '沒有麥克風權限。請到瀏覽器或手機設定允許此網站使用麥克風；iPhone 從主畫面開啟若不行，請改用 Safari 開啟。',
+      'service-not-allowed': '這個開啟方式不能使用語音辨識。iPhone 請改用 Safari 開啟網址，或用下方打字。',
+      'audio-capture': '找不到麥克風，請確認裝置的麥克風可以使用。',
+      'network': '語音辨識需要網路，請檢查連線後再試。',
+      'language-not-supported': '這個瀏覽器不支援中文語音辨識，請改用 Chrome 或 Safari，或用下方打字。',
+    };
+    stopConversation(messages[e.error] || '語音辨識發生問題（' + e.error + '），可以先用下方打字。');
   };
 
   recog.onend = () => {
@@ -209,7 +215,7 @@ function listen() {
   try {
     recog.start();
   } catch (e) {
-    setTimeout(listen, 300);
+    stopConversation('無法開始收音（' + e.message + '），可以先用下方打字。');
   }
 }
 
@@ -268,9 +274,7 @@ async function startConversation() {
   addBubble('ai', greeting);
 
   if (!SpeechRecognition) {
-    voice.active = false;
-    setMicState('idle');
-    $('mic-status').textContent = '這個瀏覽器不支援語音辨識，請用下方打字';
+    stopConversation('這個瀏覽器不支援語音辨識。iPhone 請用 Safari，電腦請用 Chrome；也可以用下方打字。');
     $('text-input').focus();
     return;
   }
@@ -280,13 +284,15 @@ async function startConversation() {
   if (voice.active) setTimeout(listen, 300);
 }
 
-function stopConversation() {
+function stopConversation(message) {
   voice.active = false;
   const r = voice.recog;
   voice.recog = null;
   if (r) { try { r.abort(); } catch (e) { /* 已停止 */ } }
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   if (!voice.busy) setMicState('idle');
+  // 錯誤說明要留在畫面上，使用者才知道為什麼停下來
+  if (message) $('mic-status').textContent = message;
 }
 
 $('mic-btn').addEventListener('click', () => {

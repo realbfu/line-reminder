@@ -92,15 +92,216 @@ document.querySelectorAll('.tab').forEach((tab) => {
   });
 });
 
-// TODO(2026-10-26): 第三階段改成真正的語音對話
-$('mic-btn').addEventListener('click', () => {
+// ---- 語音對話 ----
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const voice = {
+  active: false,
+  recog: null,
+  history: [],
+  busy: false,
+};
+
+function setMicState(state) {
   const wrap = document.querySelector('.mic-wrap');
-  const active = !wrap.classList.contains('active');
-  wrap.classList.toggle('active', active);
-  $('mic-btn').setAttribute('aria-pressed', String(active));
-  $('mic-btn').setAttribute('aria-label', active ? '結束對話' : '開始對話');
-  $('mic-status').textContent = active ? '語音對話會在下一階段加入，再點一下結束' : '';
+  wrap.classList.toggle('active', state !== 'idle');
+  wrap.classList.toggle('thinking', state === 'thinking');
+  wrap.classList.toggle('speaking', state === 'speaking');
+  $('mic-btn').setAttribute('aria-pressed', String(state !== 'idle'));
+  $('mic-btn').setAttribute('aria-label', state === 'idle' ? '開始對話' : '結束對話');
+  $('mic-status').textContent = {
+    idle: '',
+    listening: '我在聽，請說…',
+    thinking: '思考中…',
+    speaking: '',
+  }[state];
+}
+
+function addBubble(kind, text) {
+  const el = document.createElement('div');
+  el.className = 'bubble ' + kind;
+  el.textContent = text;
+  const chat = $('chat');
+  chat.append(el);
+  // 只留最近幾則，避免把提醒清單擠到很下面
+  while (chat.children.length > 8) chat.firstElementChild.remove();
+  el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  return el;
+}
+
+function pickVoice() {
+  const voices = speechSynthesis.getVoices();
+  return voices.find((v) => v.lang === 'zh-TW') || voices.find((v) => v.lang.startsWith('zh')) || null;
+}
+
+function speak(text) {
+  return new Promise((resolve) => {
+    if (!('speechSynthesis' in window)) return resolve();
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'zh-TW';
+    u.rate = 1.05;
+    const v = pickVoice();
+    if (v) u.voice = v;
+    u.onend = resolve;
+    u.onerror = resolve;
+    speechSynthesis.speak(u);
+  });
+}
+
+function listen() {
+  if (!voice.active || !SpeechRecognition) return;
+  const recog = new SpeechRecognition();
+  voice.recog = recog;
+  recog.lang = 'zh-TW';
+  recog.interimResults = true;
+  recog.continuous = false;
+  recog.maxAlternatives = 1;
+
+  let finalText = '';
+  let interimEl = null;
+  setMicState('listening');
+
+  recog.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
+      else interim += e.results[i][0].transcript;
+    }
+    const shown = (finalText + interim).trim();
+    if (!shown) return;
+    if (!interimEl) interimEl = addBubble('user interim', shown);
+    else interimEl.textContent = shown;
+  };
+
+  recog.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      stopConversation();
+      toast('沒有麥克風權限，請在瀏覽器設定允許使用麥克風，或改用打字');
+    }
+  };
+
+  recog.onend = () => {
+    if (voice.recog !== recog) return;
+    voice.recog = null;
+    const text = finalText.trim();
+    if (interimEl) {
+      if (text) interimEl.classList.remove('interim');
+      else interimEl.remove();
+    }
+    if (!voice.active) return;
+    // 一段時間沒說話瀏覽器會自動停止收音，對話還沒結束就重新開始聽
+    if (text) sendMessage(text, { fromVoice: true });
+    else listen();
+  };
+
+  try {
+    recog.start();
+  } catch (e) {
+    setTimeout(listen, 300);
+  }
+}
+
+async function sendMessage(text, { fromVoice = false } = {}) {
+  if (voice.busy || !text) return;
+  voice.busy = true;
+  $('text-form').querySelector('button').disabled = true;
+  if (!fromVoice) addBubble('user', text);
+  voice.history.push({ role: 'user', text });
+  setMicState('thinking');
+
+  let res;
+  try {
+    res = await api('chat', { messages: voice.history });
+  } catch (e) {
+    res = { ok: false, error: e.message === '請重新登入' ? e.message : '連線失敗，請檢查網路' };
+  }
+  voice.busy = false;
+  $('text-form').querySelector('button').disabled = false;
+
+  const reply = res.ok ? res.reply : res.error;
+  addBubble('ai', reply);
+
+  if (res.ok) {
+    let remembered = reply;
+    if (res.created && res.created.length) {
+      remembered += '\n[已建立]';
+      addBubble('done', '已建立 ' + res.created.length + ' 則提醒');
+      loadReminders();
+    }
+    voice.history.push({ role: 'assistant', text: remembered });
+  } else {
+    // 失敗的這一句不留在對話裡，讓使用者重說一次
+    voice.history.pop();
+  }
+
+  if (voice.active) {
+    setMicState('speaking');
+    await speak(reply);
+    if (res.ok && res.end) {
+      stopConversation();
+      return;
+    }
+    // 等語音完全播完再收音，避免把自己的聲音錄進去
+    setTimeout(listen, 300);
+  } else {
+    setMicState('idle');
+  }
+}
+
+async function startConversation() {
+  voice.active = true;
+  voice.history = [];
+  $('chat').replaceChildren();
+  const greeting = '嗨，' + ($('owner-name').textContent || 'Jeff') + '，有什麼我可以幫忙的？';
+  addBubble('ai', greeting);
+
+  if (!SpeechRecognition) {
+    voice.active = false;
+    setMicState('idle');
+    $('mic-status').textContent = '這個瀏覽器不支援語音辨識，請用下方打字';
+    $('text-input').focus();
+    return;
+  }
+
+  setMicState('speaking');
+  await speak(greeting);
+  if (voice.active) setTimeout(listen, 300);
+}
+
+function stopConversation() {
+  voice.active = false;
+  const r = voice.recog;
+  voice.recog = null;
+  if (r) { try { r.abort(); } catch (e) { /* 已停止 */ } }
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (!voice.busy) setMicState('idle');
+}
+
+$('mic-btn').addEventListener('click', () => {
+  if (voice.active) stopConversation();
+  else startConversation();
 });
+
+$('text-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = $('text-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  // 打字時若正在收音，先停下來避免重複送出
+  if (voice.recog) {
+    const r = voice.recog;
+    voice.recog = null;
+    try { r.abort(); } catch (err) { /* 已停止 */ }
+  }
+  sendMessage(text);
+});
+
+if ('speechSynthesis' in window) {
+  // 部分瀏覽器的語音清單是非同步載入，先觸發一次
+  speechSynthesis.getVoices();
+  speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
+}
 
 function enterApp(name) {
   $('owner-name').textContent = name || 'Jeff';

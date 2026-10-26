@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="styles.css?v=4">
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <main id="login-view" class="view login" hidden>
@@ -65,24 +65,38 @@
     </section>
 
     <section class="panel">
+      <div id="quota" class="quota" aria-label="本月 LINE 額度"></div>
       <div class="panel-head">
-        <h2>提醒事項</h2>
+        <div class="seg" role="tablist">
+          <button class="seg-btn" role="tab" data-view="reminders" aria-selected="true">提醒事項</button>
+          <button class="seg-btn" role="tab" data-view="friends" aria-selected="false">好友與群組</button>
+        </div>
         <button id="refresh-btn" class="icon-btn" type="button" aria-label="重新整理" title="重新整理">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg>
         </button>
       </div>
-      <div class="tabs" role="tablist">
-        <button class="tab" role="tab" data-status="待發送" aria-selected="true">待發送 <span class="count"></span></button>
-        <button class="tab" role="tab" data-status="已送出" aria-selected="false">已送出 <span class="count"></span></button>
-        <button class="tab" role="tab" data-status="失敗" aria-selected="false">失敗 <span class="count"></span></button>
+
+      <div id="reminders-view">
+        <div class="tabs" role="tablist">
+          <button class="tab" role="tab" data-status="待發送" aria-selected="true">待發送 <span class="count"></span></button>
+          <button class="tab" role="tab" data-status="已送出" aria-selected="false">已送出 <span class="count"></span></button>
+          <button class="tab" role="tab" data-status="失敗" aria-selected="false">失敗 <span class="count"></span></button>
+        </div>
+        <ul id="reminder-list" class="list"></ul>
+        <p id="list-empty" class="empty" hidden></p>
       </div>
-      <ul id="reminder-list" class="list"></ul>
-      <p id="list-empty" class="empty" hidden></p>
+
+      <div id="friends-view" hidden>
+        <div id="bot-filter" class="filter" role="tablist"></div>
+        <ul id="friend-list" class="list"></ul>
+        <p id="friend-empty" class="empty" hidden></p>
+        <p class="hint-small">只有加機器人為好友（或把機器人拉進群組）、並傳過訊息的人才會出現在這裡。設定暱稱後，就能用說的指定發給誰。</p>
+      </div>
     </section>
-    <p class="version">版本 4</p>
+    <p class="version">版本 5</p>
   </main>
 
   <div id="toast" class="toast" role="status" hidden></div>
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

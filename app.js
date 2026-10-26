@@ -82,7 +82,207 @@ $('logout-btn').addEventListener('click', async () => {
   logoutLocal();
 });
 
-$('refresh-btn').addEventListener('click', () => loadReminders(true));
+let currentView = 'reminders';
+let targets = [];
+let currentBot = 'all';
+
+$('refresh-btn').addEventListener('click', () => {
+  loadBots();
+  if (currentView === 'friends') loadTargets(true);
+  else loadReminders(true);
+});
+
+document.querySelectorAll('.seg-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    currentView = btn.dataset.view;
+    document.querySelectorAll('.seg-btn').forEach((b) => b.setAttribute('aria-selected', String(b === btn)));
+    $('reminders-view').hidden = currentView !== 'reminders';
+    $('friends-view').hidden = currentView !== 'friends';
+    if (currentView === 'friends') loadTargets();
+  });
+});
+
+async function loadBots() {
+  try {
+    const res = await api('bots');
+    if (res.ok) renderQuota(res.bots);
+  } catch (e) { /* 額度只是參考資訊，讀不到不影響使用 */ }
+}
+
+function renderQuota(bots) {
+  $('quota').replaceChildren(...bots.map((b) => {
+    const card = document.createElement('div');
+    card.className = 'quota-card';
+    const name = document.createElement('span');
+    name.className = 'quota-name';
+    name.textContent = b.name;
+    const num = document.createElement('div');
+    num.className = 'quota-num';
+    if (b.used === null) {
+      num.textContent = '查詢失敗';
+      card.append(name, num);
+      return card;
+    }
+    num.textContent = b.used;
+    if (b.limit) {
+      const small = document.createElement('small');
+      small.textContent = ' / ' + b.limit + ' 則';
+      num.append(small);
+    }
+    card.append(name, num);
+    if (b.limit) {
+      const ratio = Math.min(1, b.used / b.limit);
+      const bar = document.createElement('div');
+      bar.className = 'bar' + (ratio >= 1 ? ' full' : ratio >= 0.8 ? ' warn' : '');
+      const fill = document.createElement('span');
+      fill.style.width = (ratio * 100).toFixed(1) + '%';
+      bar.append(fill);
+      card.append(bar);
+    }
+    return card;
+  }));
+}
+
+async function loadTargets(manual) {
+  const btn = $('refresh-btn');
+  btn.classList.add('spin');
+  try {
+    const res = await api('targets');
+    if (res.ok) {
+      targets = res.targets;
+      renderFriends();
+      if (manual) toast('已更新');
+    }
+  } catch (e) {
+    if (token) toast('讀取失敗，請稍後再試');
+  } finally {
+    btn.classList.remove('spin');
+  }
+}
+
+function renderFriends() {
+  // 依機器人分組的篩選按鈕，Discord 頻道另外一組
+  const groups = [];
+  targets.forEach((t) => {
+    const key = t.bot || 'discord';
+    if (!groups.some((g) => g.key === key)) groups.push({ key, name: t.botName });
+  });
+  if (currentBot !== 'all' && !groups.some((g) => g.key === currentBot)) currentBot = 'all';
+  const filters = [{ key: 'all', name: '全部' }, ...groups].map((g) => {
+    const b = document.createElement('button');
+    b.className = 'filter-btn';
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(g.key === currentBot));
+    const count = g.key === 'all' ? targets.length : targets.filter((t) => (t.bot || 'discord') === g.key).length;
+    b.textContent = g.name + ' ' + count;
+    b.addEventListener('click', () => { currentBot = g.key; renderFriends(); });
+    return b;
+  });
+  $('bot-filter').replaceChildren(...filters);
+
+  const items = targets
+    .filter((t) => currentBot === 'all' || (t.bot || 'discord') === currentBot)
+    .sort((a, b) => (b.nickname ? 1 : 0) - (a.nickname ? 1 : 0));
+  $('friend-list').replaceChildren(...items.map(renderFriend));
+  $('friend-empty').hidden = items.length > 0;
+  $('friend-empty').textContent = '還沒有好友或群組';
+}
+
+const joinFmt = new Intl.DateTimeFormat('zh-TW', { timeZone: TIME_ZONE, year: 'numeric', month: 'numeric', day: 'numeric' });
+
+function renderFriend(t) {
+  const li = document.createElement('li');
+  li.className = 'friend';
+
+  let avatar;
+  if (t.picture) {
+    avatar = document.createElement('img');
+    avatar.src = t.picture;
+    avatar.alt = '';
+    avatar.loading = 'lazy';
+    avatar.referrerPolicy = 'no-referrer';
+  } else {
+    avatar = document.createElement('div');
+    avatar.textContent = t.type === 'Discord' ? '#' : (t.lineName || t.nickname || '?').slice(0, 1);
+  }
+  avatar.className = 'avatar';
+
+  const main = document.createElement('div');
+  main.className = 'friend-main';
+  const name = document.createElement('p');
+  name.className = 'friend-name' + (t.nickname ? '' : ' unset');
+  name.textContent = t.nickname || '尚未設定暱稱';
+  const meta = document.createElement('p');
+  meta.className = 'friend-meta';
+  const parts = [];
+  if (t.lineName && t.lineName !== t.nickname) parts.push(t.lineName);
+  parts.push(t.type === 'Discord' ? 'Discord 頻道' : t.type.replace('LINE ', ''));
+  if (t.cost) parts.push('約 ' + t.cost + ' 人');
+  if (currentBot === 'all' && t.bot) parts.push(t.botName);
+  if (t.joinedAt) parts.push(joinFmt.format(new Date(t.joinedAt)) + ' 加入');
+  meta.textContent = parts.join(' · ');
+  if (t.note) {
+    const warn = document.createElement('span');
+    warn.className = 'warn';
+    warn.textContent = ' · ' + t.note;
+    meta.append(warn);
+  }
+  main.append(name, meta);
+
+  const edit = document.createElement('button');
+  edit.className = 'edit-btn';
+  edit.type = 'button';
+  edit.textContent = t.nickname ? '改暱稱' : '設定暱稱';
+  edit.addEventListener('click', () => openNicknameEditor(li, t, edit));
+
+  li.append(avatar, main, edit);
+  return li;
+}
+
+function openNicknameEditor(li, t, editBtn) {
+  if (li.querySelector('.nick-form')) return;
+  editBtn.hidden = true;
+  const form = document.createElement('form');
+  form.className = 'nick-form';
+  const input = document.createElement('input');
+  input.value = t.nickname;
+  input.placeholder = '輸入暱稱';
+  input.maxLength = 20;
+  const save = document.createElement('button');
+  save.className = 'save';
+  save.type = 'submit';
+  save.textContent = '儲存';
+  const cancel = document.createElement('button');
+  cancel.className = 'cancel';
+  cancel.type = 'button';
+  cancel.textContent = '取消';
+  cancel.addEventListener('click', () => { form.remove(); editBtn.hidden = false; });
+  form.append(input, save, cancel);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    save.disabled = true;
+    save.textContent = '儲存中…';
+    try {
+      const res = await api('setNickname', { bot: t.bot, id: t.id, nickname: input.value });
+      if (!res.ok) {
+        toast(res.error);
+        save.disabled = false;
+        save.textContent = '儲存';
+        return;
+      }
+      t.nickname = input.value.trim();
+      renderFriends();
+      toast('已儲存');
+    } catch (err) {
+      toast('儲存失敗，請稍後再試');
+      save.disabled = false;
+      save.textContent = '儲存';
+    }
+  });
+  li.append(form);
+  input.focus();
+}
 
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => {
@@ -325,6 +525,7 @@ function enterApp(name) {
   $('owner-name').textContent = name || 'Jeff';
   showView('app');
   loadReminders();
+  loadBots();
 }
 
 async function loadReminders(manual) {

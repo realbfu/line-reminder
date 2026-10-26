@@ -1,5 +1,5 @@
-const CACHE = 'reminder-v4';
-const SHELL = ['./', 'index.html', 'styles.css?v=4', 'app.js?v=4', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
+const CACHE = 'reminder-v5';
+const SHELL = ['./', 'index.html', 'styles.css?v=5', 'app.js?v=5', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

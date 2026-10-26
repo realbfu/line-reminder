@@ -136,14 +136,26 @@ function pickVoice() {
 function speak(text) {
   return new Promise((resolve) => {
     if (!('speechSynthesis' in window)) return resolve();
-    speechSynthesis.cancel();
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(guard);
+      resolve();
+    };
+    // Safari 與 Chrome 有時不觸發 onend（例如手機靜音、語音被系統擋下），逾時就繼續，避免對話卡住
+    const guard = setTimeout(done, Math.max(4000, text.length * 350));
+
+    // 在 Safari 上先 cancel 再立刻 speak，常會把這句一起取消，所以只在真的有聲音時才清空
+    if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'zh-TW';
     u.rate = 1.05;
     const v = pickVoice();
     if (v) u.voice = v;
-    u.onend = resolve;
-    u.onerror = resolve;
+    u.onend = done;
+    u.onerror = done;
+    speechSynthesis.resume();
     speechSynthesis.speak(u);
   });
 }

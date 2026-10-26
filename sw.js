@@ -1,4 +1,4 @@
-const CACHE = 'reminder-v2';
+const CACHE = 'reminder-v3';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {

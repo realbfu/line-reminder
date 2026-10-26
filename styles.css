@@ -391,7 +391,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 .item {
   display: grid;
-  grid-template-columns: 76px 1fr;
+  grid-template-columns: 76px 1fr auto;
+  align-items: start;
   gap: 12px;
   padding: 14px 4px;
   border-bottom: 1px solid var(--line);
@@ -701,4 +702,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
+}
+
+.edit-btn.danger { color: var(--danger); }
+
+.edit-btn.danger.armed {
+  background: var(--danger);
+  color: #fff;
 }

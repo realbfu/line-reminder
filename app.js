@@ -613,7 +613,51 @@ function renderItem(r) {
   body.append(content, meta);
 
   li.append(whenEl, body);
+  if (r.status === '待發送' || r.status === '失敗') li.append(renderDeleteButton(r));
   return li;
+}
+
+// 按第一次只變成「確定？」，3 秒內再按才真的取消，避免手機上誤觸
+function renderDeleteButton(r) {
+  const label = r.status === '待發送' ? '取消' : '刪除';
+  const btn = document.createElement('button');
+  btn.className = 'edit-btn danger';
+  btn.type = 'button';
+  btn.textContent = label;
+  let armed = false;
+  let timer;
+  btn.addEventListener('click', async () => {
+    if (!armed) {
+      armed = true;
+      btn.textContent = '確定' + label + '？';
+      btn.classList.add('armed');
+      timer = setTimeout(() => {
+        armed = false;
+        btn.textContent = label;
+        btn.classList.remove('armed');
+      }, 3000);
+      return;
+    }
+    clearTimeout(timer);
+    btn.disabled = true;
+    btn.textContent = label + '中…';
+    try {
+      const res = await api('deleteReminder', { id: r.id });
+      if (!res.ok) {
+        toast(res.error);
+        loadReminders();
+        return;
+      }
+      reminders = reminders.filter((x) => x.id !== r.id);
+      renderList();
+      toast(r.status === '待發送' ? '已取消，不會發送' : '已刪除');
+    } catch (e) {
+      toast(label + '失敗，請稍後再試');
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  });
+  return btn;
 }
 
 if ('serviceWorker' in navigator) {

@@ -710,3 +710,60 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--danger);
   color: #fff;
 }
+
+/* 卡片 */
+.bubble.card {
+  align-self: flex-start;
+  width: min(100%, 320px);
+  padding: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  border-bottom-left-radius: 6px;
+}
+
+.bubble.card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 12px;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.card-actions button {
+  flex: 1;
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.card-actions button.primary { background: var(--accent); color: #fff; }
+.card-actions button:disabled { opacity: .4; }
+
+.thumb {
+  display: block;
+  width: 96px;
+  height: 96px;
+  margin-top: 8px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+/* 預覽版標示 */
+.is-preview .brand span::after {
+  content: '預覽版';
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #E8A13A;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}

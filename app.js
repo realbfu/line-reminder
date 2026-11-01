@@ -1,4 +1,11 @@
-const API_URL = 'https://script.google.com/macros/s/AKfycbx1UBMAs__SrTlId7s07aF0T8kowuGaSorAuuGRzsNV0PUvG_HacYFHedw7RGrTA_o6/exec?api=1';
+// 正式網址連正式版雲端程式；Cloudflare 預覽網址與本機預覽連預覽版，測試時不會動到正式資料
+const IS_PRODUCTION = location.hostname === 'realbfu.github.io';
+const API_URL = IS_PRODUCTION
+  ? 'https://script.google.com/macros/s/AKfycbx1UBMAs__SrTlId7s07aF0T8kowuGaSorAuuGRzsNV0PUvG_HacYFHedw7RGrTA_o6/exec?api=1'
+  : 'https://script.google.com/macros/s/AKfycbyZgZwWB0tVO6SL98wUKAcr_bkWJtpBlwXH0B0oHsEl2_rNVdsHWuCKLOhUXcrxpWAKcA/exec?api=1';
+const CARD_SIZE = 1040;
+// LINE 的預覽圖限制 1 MB，留一點餘裕
+const MAX_IMAGE_BYTES = 900 * 1024;
 const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 const TOKEN_KEY = 'reminder.token';
 const NAME_KEY = 'reminder.name';
@@ -426,13 +433,20 @@ async function sendMessage(text, { fromVoice = false } = {}) {
   if (!fromVoice) addBubble('user', text);
   voice.history.push({ role: 'user', text });
   setMicState('thinking');
+  // 畫卡片要半分鐘左右，等久了提示一下，免得以為當掉
+  const slowHint = setTimeout(() => {
+    if (voice.busy) $('mic-status').textContent = '還在處理中，畫卡片大約要半分鐘…';
+  }, 6000);
 
   let res;
   try {
-    res = await api('chat', { messages: voice.history });
+    // 建立附卡片的提醒前，要等卡片上傳完成拿到圖片編號
+    const imageId = voice.cardUpload ? await voice.cardUpload.catch(() => null) : null;
+    res = await api('chat', { messages: voice.history, imageId });
   } catch (e) {
     res = { ok: false, error: e.message === '請重新登入' ? e.message : '連線失敗，請檢查網路' };
   }
+  clearTimeout(slowHint);
   voice.busy = false;
   $('text-form').querySelector('button').disabled = false;
 
@@ -441,9 +455,22 @@ async function sendMessage(text, { fromVoice = false } = {}) {
 
   if (res.ok) {
     let remembered = reply;
+    if (res.card && res.card.svg) {
+      remembered += '\n[已產生卡片]';
+      await showCard(res.card.svg);
+    }
+    if (res.imageAccepted && voice.card) {
+      remembered += '\n[卡片已接受]';
+      voice.cardUpload = uploadCard(voice.card);
+    }
     if (res.created && res.created.length) {
       remembered += '\n[已建立]';
-      addBubble('done', '已建立 ' + res.created.length + ' 則提醒');
+      const withImage = res.created.filter((c) => c.withImage).length;
+      addBubble('done', '已建立 ' + res.created.length + ' 則提醒' + (withImage ? '（含卡片）' : ''));
+      if (withImage) {
+        voice.card = null;
+        voice.cardUpload = null;
+      }
       loadReminders();
     }
     voice.history.push({ role: 'assistant', text: remembered });
@@ -466,9 +493,78 @@ async function sendMessage(text, { fromVoice = false } = {}) {
   }
 }
 
+// ---- 卡片 ----
+
+// 在使用者的瀏覽器把 SVG 畫成 JPEG：Apps Script 無法轉檔，而 LINE 只收 JPEG／PNG
+async function svgToJpeg(svg) {
+  const img = new Image();
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  await img.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = CARD_SIZE;
+  canvas.height = CARD_SIZE;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, CARD_SIZE, CARD_SIZE);
+  ctx.drawImage(img, 0, 0, CARD_SIZE, CARD_SIZE);
+  for (const quality of [0.92, 0.85, 0.75, 0.6]) {
+    const url = canvas.toDataURL('image/jpeg', quality);
+    // base64 長度 × 3/4 ≈ 實際位元組數
+    if (url.length * 0.75 < MAX_IMAGE_BYTES) return url;
+  }
+  return canvas.toDataURL('image/jpeg', 0.5);
+}
+
+async function showCard(svg) {
+  let dataUrl;
+  try {
+    dataUrl = await svgToJpeg(svg);
+  } catch (e) {
+    addBubble('ai', '卡片在這台裝置上顯示失敗，請說「重做」再試一次。');
+    return;
+  }
+  voice.card = dataUrl;
+  voice.cardUpload = null;
+
+  // 舊卡片的按鈕停用，避免按到已經被取代的那張
+  document.querySelectorAll('.card-actions button').forEach((b) => { b.disabled = true; });
+
+  const wrap = document.createElement('div');
+  wrap.className = 'bubble card';
+  const img = document.createElement('img');
+  img.src = dataUrl;
+  img.alt = 'AI 畫的卡片';
+  const actions = document.createElement('div');
+  actions.className = 'card-actions';
+  const redo = document.createElement('button');
+  redo.type = 'button';
+  redo.textContent = '重做';
+  const use = document.createElement('button');
+  use.type = 'button';
+  use.className = 'primary';
+  use.textContent = '用這張';
+  redo.addEventListener('click', () => sendTyped('重做'));
+  use.addEventListener('click', () => sendTyped('用這張'));
+  actions.append(redo, use);
+  wrap.append(img, actions);
+  $('chat').append(wrap);
+  wrap.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+async function uploadCard(dataUrl) {
+  const res = await api('saveImage', { dataUrl });
+  if (!res.ok) {
+    toast('卡片上傳失敗：' + res.error);
+    throw new Error(res.error);
+  }
+  return res.id;
+}
+
 async function startConversation() {
   voice.active = true;
   voice.history = [];
+  voice.card = null;
+  voice.cardUpload = null;
   $('chat').replaceChildren();
   const greeting = '嗨，' + ($('owner-name').textContent || 'Jeff') + '，有什麼我可以幫忙的？';
   addBubble('ai', greeting);
@@ -506,14 +602,19 @@ $('text-form').addEventListener('submit', (e) => {
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
-  // 打字時若正在收音，先停下來避免重複送出
+  sendTyped(text);
+});
+
+// 打字或按按鈕送出時，若正在收音，先停下來避免重複送出
+function sendTyped(text) {
+  if (voice.busy) return;
   if (voice.recog) {
     const r = voice.recog;
     voice.recog = null;
     try { r.abort(); } catch (err) { /* 已停止 */ }
   }
   sendMessage(text);
-});
+}
 
 if ('speechSynthesis' in window) {
   // 部分瀏覽器的語音清單是非同步載入，先觸發一次
@@ -611,6 +712,15 @@ function renderItem(r) {
     meta.append(note);
   }
   body.append(content, meta);
+  if (r.image) {
+    const thumb = document.createElement('img');
+    thumb.className = 'thumb';
+    thumb.src = r.image;
+    thumb.alt = '附上的卡片';
+    thumb.loading = 'lazy';
+    thumb.referrerPolicy = 'no-referrer';
+    body.append(thumb);
+  }
 
   li.append(whenEl, body);
   if (r.status === '待發送' || r.status === '失敗') li.append(renderDeleteButton(r));
@@ -662,6 +772,12 @@ function renderDeleteButton(r) {
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => { /* 不影響使用 */ });
+}
+
+// 標示預覽版，避免在手機上把預覽版當成正式版使用
+if (!IS_PRODUCTION) {
+  document.body.classList.add('is-preview');
+  document.title = '（預覽版）' + document.title;
 }
 
 if (token) {

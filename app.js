@@ -440,9 +440,9 @@ async function sendMessage(text, { fromVoice = false } = {}) {
 
   let res;
   try {
-    // 建立附卡片的提醒前，要等卡片上傳完成拿到圖片編號
+    // 建立附卡片的提醒前，要等卡片上傳完成拿到圖片編號；失敗時把原因交給伺服器說明
     const imageId = voice.cardUpload ? await voice.cardUpload.catch(() => null) : null;
-    res = await api('chat', { messages: voice.history, imageId });
+    res = await api('chat', { messages: voice.history, imageId, imageError: imageId ? '' : voice.cardError });
   } catch (e) {
     res = { ok: false, error: e.message === '請重新登入' ? e.message : '連線失敗，請檢查網路' };
   }
@@ -459,18 +459,12 @@ async function sendMessage(text, { fromVoice = false } = {}) {
       remembered += '\n[已產生卡片]';
       await showCard(res.card.svg);
     }
-    if (res.imageAccepted && voice.card) {
-      remembered += '\n[卡片已接受]';
-      voice.cardUpload = uploadCard(voice.card);
-    }
+    if (res.imageAccepted && voice.card) remembered += '\n[卡片已接受]';
     if (res.created && res.created.length) {
       remembered += '\n[已建立]';
       const withImage = res.created.filter((c) => c.withImage).length;
       addBubble('done', '已建立 ' + res.created.length + ' 則提醒' + (withImage ? '（含卡片）' : ''));
-      if (withImage) {
-        voice.card = null;
-        voice.cardUpload = null;
-      }
+      if (withImage) resetCard();
       loadReminders();
     }
     voice.history.push({ role: 'assistant', text: remembered });
@@ -523,8 +517,15 @@ async function showCard(svg) {
     addBubble('ai', '卡片在這台裝置上顯示失敗，請說「重做」再試一次。');
     return;
   }
+  // 被新卡片取代、沒用到的舊卡片移到垃圾桶
+  const previous = voice.cardUpload;
+  if (previous) previous.then((id) => api('discardImage', { id })).catch(() => {});
+
   voice.card = dataUrl;
-  voice.cardUpload = null;
+  voice.cardError = '';
+  // 畫好就先在背景上傳；不等使用者接受，避免 AI 漏判「接受」時卡片永遠沒上傳
+  voice.cardUpload = uploadCard(dataUrl);
+  voice.cardUpload.catch(() => {});
 
   // 舊卡片的按鈕停用，避免按到已經被取代的那張
   document.querySelectorAll('.card-actions button').forEach((b) => { b.disabled = true; });
@@ -552,19 +553,31 @@ async function showCard(svg) {
 }
 
 async function uploadCard(dataUrl) {
-  const res = await api('saveImage', { dataUrl });
+  let res;
+  try {
+    res = await api('saveImage', { dataUrl });
+  } catch (e) {
+    res = { ok: false, error: '連線失敗' };
+  }
   if (!res.ok) {
-    toast('卡片上傳失敗：' + res.error);
+    voice.cardError = res.error;
+    // 失敗原因要留在對話裡，不能用會消失的 toast，否則使用者不知道為什麼一直不能建立
+    addBubble('ai', '卡片存檔失敗：' + res.error + '。可以說「重做」再試一次。');
     throw new Error(res.error);
   }
   return res.id;
 }
 
+function resetCard() {
+  voice.card = null;
+  voice.cardUpload = null;
+  voice.cardError = '';
+}
+
 async function startConversation() {
   voice.active = true;
   voice.history = [];
-  voice.card = null;
-  voice.cardUpload = null;
+  resetCard();
   $('chat').replaceChildren();
   const greeting = '嗨，' + ($('owner-name').textContent || 'Jeff') + '，有什麼我可以幫忙的？';
   addBubble('ai', greeting);
